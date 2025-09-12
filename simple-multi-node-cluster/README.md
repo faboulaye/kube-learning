@@ -6,7 +6,8 @@ This example creates a multi-node kubernetes cluster on AWS using Amazon Linux 2
 * 2 Worker nodes
 
 Calico is used as CNI for the cluster.
-/!\ The installation should be done as `sudouser``
+
+(!) The installation should be done as `sudouser``
 
 ```bash
 sudo su
