@@ -1,0 +1,14 @@
+# Local Terraform dirs (in root and any submodules)
+**/.terraform/*
+
+# State files
+*.tfstate
+*.tfstate.*
+
+# Terraform backend configuration
+backend.tf
+
+# Certificates and private keys
+*.pem
+*.crt
+*.key
