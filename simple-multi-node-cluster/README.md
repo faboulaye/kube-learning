@@ -30,7 +30,6 @@ Patch your Amazon Linux so that it's up to date, and then reboot
 
 ```bash
 yum -y upgrade
-reboot
 ```
 
 Review the kernel versions that the amazon-linux-extras repository offers:
@@ -99,14 +98,10 @@ The output shows that the current active kernel version is still `4.14.268-205.5
 To activate the latest installed kernel version, reboot the instance:
 
 ```bash
-sudo reboot
+reboot
 ```
 
 Log in to the instance again, and then verify that the new kernel is active:
-
-```bash
-reboot
-```
 
 ### Local Hostname Resolution
 
@@ -227,17 +222,6 @@ yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 * `kubeadm`: A tool used to bootstrap and manage Kubernetes clusters. It simplifies the process of setting up a Kubernetes control plane and worker nodes.
 * `kubectl`: The command-line tool for interacting with Kubernetes clusters, allowing you to manage and troubleshoot cluster resources.
 
-### Bash completion (optional, helpful)
-
-```bash
-yum install -y bash-completion
-echo 'source /usr/share/bash-completion/bash_completion' >> ~/.bashrc
-echo 'source <(kubectl completion bash)' >> ~/.bashrc
-echo 'alias k=kubectl' >> ~/.bashrc
-echo 'complete -F __start_kubectl k' >> ~/.bashrc
-source ~/.bashrc
-```
-
 ### Start kubelet service automatically [All nodes]
 
 ```bash
@@ -254,6 +238,7 @@ systemctl enable --now kubelet
 ```bash
 kubeadm init --control-plane-endpoint=<CP_PRIVATE_IP>:6443 \
   --apiserver-advertise-address=<CP_PRIVATE_IP> \
+  --apiserver-cert-extra-sans=<CP_PUBLIC_IP> \
   --pod-network-cidr=10.244.0.0/16
 ```
 
@@ -262,18 +247,23 @@ kubeadm init --control-plane-endpoint=<CP_PRIVATE_IP>:6443 \
 * `--control-plane-endpoint=<CP_PRIVATE_IP>:6443`: This option sets the endpoint for the control plane, which is used by `kubeadm` to configure the API server and other components to listen on this address.
 * `--apiserver-advertise-address=<CP_PRIVATE_IP>`: This option specifies the IP address that the API server will advertise to other components in the cluster.
 
-### Configure Local Access to the Kubernetes Cluster [Control plane only]
-
-```bash
-mkdir -p $HOME/.kube
-cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-chown $(id -u):$(id -g) $HOME/.kube/config
-```
-
-These commands set up your local environment to interact with the Kubernetes cluster by copying the cluster configuration file to the default location (~/.kube/config) and ensuring that it has the appropriate permissions for the current user.
+As result of `init` command, follow output instruction to set up your local environment interaction with the Kubernetes cluster by copying the cluster configuration file to the default location (~/.kube/config) and ensuring that it has the appropriate permissions for the current user.
 This setup allows you to use kubectl to manage and interact with your Kubernetes cluster from your local machine.
 
+### Bash completion (optional, helpful) [Control plane Optional]
+
+```bash
+yum install -y bash-completion
+echo 'source /usr/share/bash-completion/bash_completion' >> ~/.bashrc
+echo 'source <(kubectl completion bash)' >> ~/.bashrc
+echo 'alias k=kubectl' >> ~/.bashrc
+echo 'complete -F __start_kubectl k' >> ~/.bashrc
+source ~/.bashrc
+```
+
 ### Initializes a Kubernetes worker node and joins it to the cluster [Worker nodes only]
+
+As result of `init` command, follow the output instruction to add worker nodes in the cluster. Below is a kind of the statement to run on the worker node to join the cluster.
 
 ```bash
 kubeadm join <ip-masternode>:6443 --token dv45rt.qe7gq4crzx1rsvv6 \
@@ -374,3 +364,92 @@ kubectl get svc web -o jsonpath='{.spec.ports[0].nodePort}'; echo
 curl -I http://<worker-1-public-or-private-ip>:<nodeport>
 curl -I http://<worker-2-public-or-private-ip>:<nodeport>
 ```
+
+## Granting access to Kubernetes cluster
+
+### Generate Certificates for the User
+
+Use OpenSSL to generate a 2048-bit RSA private key. This key will be used to generate a certificate signing request (CSR) and later to authenticate to the Kubernetes cluster.
+
+```bash
+openssl genrsa -out <USER_NAME>.key 2048
+```
+
+### Create a Certificate Signing Request (CSR)
+
+Use private key generated previously to create a CSR. The `-subj "/CN=<USER_NAME>"` sets the Common Name (CN) to `<USER_NAME>`, which becomes your Kubernetes **username**. The generated CSR contains the username public key and identity, and will be signed by a Kubernetes cluster admin.
+
+```bash
+openssl req -new -key <USER_NAME>.key -out <USER_NAME>.csr -subj "/CN=<USER_NAME>"
+```
+
+### Create the CSR Object in Kubernetes
+
+The CSR must be base64-encoded to embed it into a Kubernetes object.
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: certificates.k8s.io/v1
+kind: CertificateSigningRequest
+metadata:
+  name: <USER_NAME>
+spec:
+  request: <BASE64_ENCODED_CSR>
+  signerName: kubernetes.io/kube-apiserver-client
+  expirationSeconds: 7776000
+  usages:
+    - client auth
+EOF
+```
+
+### Sign the Certificate Using the Cluster Certificate Authority (CA)
+
+Approve the CSR and sign the certificate using the cluster’s CA:
+
+```bash
+kubectl certificate approve <USER_NAME>
+```
+
+After approving the CSR, retrieve the signed certificate:
+
+```bash
+kubectl get csr <USER_NAME> -o jsonpath='{.status.certificate}' | base64 -d > <USER_NAME>.crt
+```
+
+### Configure your kube config with Credentials and Cluster Info
+
+Create a kube config file specific to the new user. This file includes the user’s certificate, key, and other necessary configuration details:
+
+```bash
+kubectl config set-credentials <USER_NAME> \ --client-certificate=<USER_NAME>.crt \
+--client-key=<USER_NAME>.key \
+--certificate-authority=ca.crt \
+--embed-certs=true
+
+kubectl config set-cluster <CLUSTER_NAME> \
+--server=https://<CONTROL_PLANE_PUBLIC_IP>:6443 \
+--certificate-authority=ca.crt \
+--embed-certs=true
+
+kubectl config set-context <USER_NAME>@<CLUSTER_NAME> \
+--cluster=<CLUSTER_NAME>  \
+--user=<USER_NAME>
+
+kubectl config use-context <USER_NAME>@<CLUSTER_NAME>
+```
+
+These commands configure the user credentials, cluster endpoint, and context in kube config of the client:
+
+* The first command tells kubectl how to authenticate `<USER_NAME>` using his certificate/key.
+* The second registers the cluster endpoint using the correct CA (Provided by kube admin).
+* The third defines a context associating the user, cluster.
+
+### Assign kube administration permission to user
+
+```bash
+kubectl create clusterrolebinding <USER_NAME>-cluster-admin \
+  --clusterrole=cluster-admin \
+  --user=<USER_NAME>
+```
+
+The cluster role allows user to administrate the whole cluster. The ClusterRoleBinding assigns this role to user (CN=<USER_NAME>), authorizing her actions.

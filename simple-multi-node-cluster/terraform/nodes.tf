@@ -111,6 +111,17 @@ resource "aws_security_group_rule" "cp_api_from_workers" {
   description              = "K8s API from workers"
 }
 
+# Control plane: allow K8s API from my public IP
+resource "aws_security_group_rule" "cp_api_from_my_ip" {
+  type              = "ingress"
+  from_port         = 6443
+  to_port           = 6443
+  protocol          = "tcp"
+  security_group_id = aws_security_group.sg_control_plane.id
+  cidr_blocks       = [var.my_ip_cidr]
+  description       = "K8s API from my public IP"
+}
+
 # Control plane: allow Calico VXLAN from workers
 resource "aws_security_group_rule" "cp_calico_from_workers" {
   type                     = "ingress"
@@ -187,6 +198,10 @@ resource "aws_instance" "nodes" {
   key_name                    = aws_key_pair.this.key_name
   associate_public_ip_address = true
   vpc_security_group_ids      = each.value.sg_ids
+  metadata_options {
+    http_tokens   = "required" # IMDSv2 only
+    http_endpoint = "enabled"  # enable IMDS 
+  }
 
   # Cloud-init to set hostname
   user_data = <<-EOF

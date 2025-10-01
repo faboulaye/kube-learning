@@ -1,0 +1,12 @@
+version: "3"
+
+includes:
+  argocd: ./argocd/Taskfile.yaml
+  eks: ./eks-cluster/Taskfile.yaml
+  cluster: ./simple-multi-node-cluster/Taskfile.yaml
+
+tasks:
+  default:
+    desc: Show common tasks
+    cmds:
+      - task -l

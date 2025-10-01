@@ -1,0 +1,77 @@
+version: "3"
+
+vars:
+  USER_NAME: faboulaye
+  TEAM_NAME: devops
+  CONTROL_PLANE_PUBLIC_IP: <CONTROL_PLANE_PUBLIC_IP> # Set this variable to the public IP of the control plane node
+  CLUSTER_NAME: simple-multi-node-cluster
+
+tasks:
+  # Terraform tasks
+
+  tf.init:
+    desc: Initialize all terraform modules
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - terraform init
+
+  tf.plan:
+    desc: Create a terraform execution plan
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - terraform plan
+
+  tf.apply:
+    desc: Apply changes required to reach the desired state of the configuration
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - terraform apply
+
+  tf.destroy:
+    desc: Destroy terraform-managed infrastructure
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - terraform destroy
+      - rm -f *.pem || true
+
+  # Other tasks
+  generate-csr:
+    desc: Generate RSA private key and create certificate signing request for kubernetes cluster
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - openssl genrsa -out {{ .USER_NAME }}.key 2048
+      - openssl req -new -key {{ .USER_NAME }}.key -out {{ .USER_NAME }}.csr -subj "/CN={{ .USER_NAME }}/O={{ .TEAM_NAME }}"
+      - |
+        cat <<EOF
+        apiVersion: certificates.k8s.io/v1
+        kind: CertificateSigningRequest
+        metadata:
+          name: {{ .USER_NAME }}
+        spec:
+          request: $(cat {{ .USER_NAME }}.csr | base64 | tr -d "\n")
+          signerName: kubernetes.io/kube-apiserver-client
+          expirationSeconds: 7776000
+          usages:
+            - client auth
+        EOF
+
+  set-user-credentials:
+    desc: Set kubernetes cluster access in kube config file
+    dir: simple-multi-node-cluster/terraform
+    cmds:
+      - kubectl config set-credentials {{ .USER_NAME }} --client-certificate={{ .USER_NAME }}.crt --client-key={{ .USER_NAME }}.key --certificate-authority=ca.crt --embed-certs=true
+      - kubectl config set-cluster {{ .CLUSTER_NAME }} --server=https://{{ .CONTROL_PLANE_PUBLIC_IP }}:6443 --certificate-authority=ca.crt --embed-certs=true
+      - kubectl config set-context {{ .USER_NAME }}@{{ .CLUSTER_NAME }} --cluster={{ .CLUSTER_NAME }} --user={{ .USER_NAME }}
+      - kubectl config use-context {{ .USER_NAME }}@{{ .CLUSTER_NAME }}
+
+  # Help task
+  clean:
+    desc: Clean generated files
+    dir: simple-multi-node-cluster/terraform
+    deps:
+      - tf.destroy
+    cmds:
+      - rm -f {{ .USER_NAME }}.key {{ .USER_NAME }}.csr {{ .USER_NAME }}.crt ca.crt || true
+      - kubectl config delete-context {{ .USER_NAME }}@{{ .CLUSTER_NAME }} || true
+      - kubectl config delete-cluster {{ .CLUSTER_NAME }} || true
+      - kubectl config unset users.{{ .USER_NAME }} || true
