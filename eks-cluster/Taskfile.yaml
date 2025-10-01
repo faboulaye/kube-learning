@@ -1,0 +1,43 @@
+version: "3"
+
+vars:
+  CLUSTER_NAME: fab-eks-cluster
+  REGION: eu-central-1
+
+tasks:
+  create.cluster:
+    desc: Create cluster using eksctl cli
+    dir: eks-cluster
+    cmds:
+      - eksctl create cluster -f eks-config.yaml
+
+  create.iam-policy:
+    desc: Create IAM policy to grant ALB controller the ability to call ELB, EC2, and IAM APIs.
+    dir: eks-cluster
+    cmds:
+      - aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam-policy.json
+
+  create.iam-service-account:
+    desc: Create IAM service account for the AWS Load Balancer Controller.
+    dir: eks-cluster
+    cmds:
+      - eksctl create iamserviceaccount \
+        --cluster=${CLUSTER_NAME} \
+        --namespace=kube-system \
+        --name=aws-load-balancer-controller \
+        --attach-policy-arn=arn:aws:iam::$(aws sts get-caller-identity --query Account --output text):policy/AWSLoadBalancerControllerIAMPolicy \
+        --override-existing-serviceaccounts \
+        --approve
+
+  install.alb-controller:
+    desc: Install AWS Load Balancer Controller using Helm.
+    dir: eks-cluster
+    cmds:
+      - helm repo add eks https://aws.github.io/eks-charts
+      - helm repo update
+      - helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+        -n kube-system \
+        --set clusterName=${CLUSTER_NAME} \
+        --set serviceAccount.create=false \
+        --set serviceAccount.name=aws-load-balancer-controller \
+        --version 1.13.0

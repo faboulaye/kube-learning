@@ -1,0 +1,28 @@
+version: "3"
+
+tasks:
+  # Terraform tasks
+
+  tf.init:
+    desc: Initialize all terraform modules
+    dir: argocd/terraform
+    cmds:
+      - terraform init
+
+  tf.plan:
+    desc: Create a terraform execution plan
+    dir: argocd/terraform
+    cmds:
+      - terraform plan
+
+  tf.apply:
+    desc: Apply changes required to reach the desired state of the configuration
+    dir: argocd/terraform
+    cmds:
+      - terraform apply
+
+  tf.destroy:
+    desc: Destroy terraform-managed infrastructure
+    dir: argocd/terraform
+    cmds:
+      - terraform destroy
